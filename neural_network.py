@@ -1,4 +1,4 @@
-from operator import index
+from sklearn.utils import shuffle
 import numpy as np
 
 activ_funcs = {
@@ -23,7 +23,7 @@ class NeuronsLayer:
     deriv_func = None
 
     def __init__(self, n_inputs, n_neurons, activ_func='none'):
-        self.weights = np.random.randn(n_inputs, n_neurons) / n_inputs
+        self.weights = np.random.randn(n_inputs, n_neurons) * np.sqrt(1 / n_inputs)
         self.biases = np.zeros((1, n_neurons))
         self.activ_func = activ_funcs[activ_func]
         self.deriv_func = deriv_funcs[activ_func]
@@ -41,19 +41,16 @@ class NeuronsLayer:
 
 
 class NeuralNetwork:
-    def __init__(self, size, funcs='relu', epochs=1000, batch_size=0.5, learning_rate=0.1, seed=42):
-        self.epochs = epochs
-        self.batch_size = batch_size
-        self.lr = learning_rate
+    def __init__(self, size, funcs='relu', seed=42):
         self.layers = []
-        funcs = ['relu'] * (len(size) - 1) if type(funcs) == str else funcs
+        funcs = [funcs] * (len(size) - 1) if type(funcs) == str else funcs
         np.random.seed(seed)
 
         for i in range(len(size) - 1):
             self.layers.append(NeuronsLayer(size[i], size[i + 1], funcs[i]))
         self.layers = np.array(self.layers)
 
-    def predict(self, X, threshold=None):
+    def predict(self, X, threshold=0.5):
         output = self.layers[0].forward(X)
 
         for layer in self.layers[1:]:
@@ -61,32 +58,41 @@ class NeuralNetwork:
 
         return np.where(output < 0.5, 0, 1) if threshold != None else output
 
-    def backward(self, y, y_pred):
-        derivs = (y_pred - y)
+    def backward(self, y, y_pred, lr):
+        derivs = (y_pred - y) * 2
 
         for layer in reversed(self.layers):
             deriv_funcs = layer.deriv_func(layer.sum_inputs)
             derivs = deriv_funcs * derivs
-            descent_baises = (derivs.sum(axis=0) * self.lr) / len(y)
+            descent_baises = (derivs.sum(axis=0) * lr) / len(y)
             descent_weights = (np.dot(layer.inputs.T, derivs)
-                               * self.lr) / len(y)
-            layer.update_params(descent_weights, descent_baises)
+                               * lr) / len(y)
             derivs = np.dot(derivs, layer.weights.T)
+            layer.update_params(descent_weights, descent_baises)
 
-    def fit(self, X, y):
+    def fit(self, X, y, epochs=100, batch_size=16, learning_rate=0.4):
         losses = []
-        batch = int(len(y) * self.batch_size)
-        # n_baches = int(len(y) / bach)
-        # baches = np.array([(i * bach, (i + 1) * bach) if i < (len(y) - 1)
-        #           else (i * bach, len(y)) for i in range(n_baches)])
 
         y = y.reshape((len(y), 1)) if y.ndim == 1 else y
 
-        for epoch in range(self.epochs):
-            indexes = np.random.choice(len(y), batch, replace=False)
-            X_baches, y_baches = X, y
-            y_pred = self.predict(X_baches)
-            losses.append([epoch, mse_loss(y_baches, y_pred)])
-            self.backward(y_baches, y_pred)
+        for epoch in range(epochs):
+            if X.shape[0] % batch_size == 0:
+                n_batches = int(X.shape[0] / batch_size)
+            else:
+                n_batches = int(X.shape[0] / batch_size ) - 1
+
+            X, y = shuffle(X, y)
+
+            X_batches = [X[batch_size*i:batch_size*(i+1)] for i in range(0, n_batches)]
+            y_batches = [y[batch_size*i:batch_size*(i+1)] for i in range(0, n_batches)]
+
+            batches_losse = 0
+
+            for i, (X_batch, y_batch) in enumerate(zip(X_batches, y_batches)):
+                y_pred = self.predict(X_batch, threshold=None)
+                batches_losse += mse_loss(y_batch, y_pred)
+                self.backward(y_batch, y_pred, learning_rate)
+            
+            losses.append([epoch, batches_losse / n_batches])
 
         return np.array(losses)
